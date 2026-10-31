@@ -72,8 +72,9 @@
     </div>
 
     <script>
-        // Bezpieczny, darmowy serwer pośredniczący Pipedream bez blokad CORS
-        const CHMURA_URL = "https://pipedream.net";
+        // Przygotowana bezpieczna chmura tekstowa (Supabase REST API) bez blokad CORS
+        const CHMURA_URL = "https://supabase.co";
+        const API_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InRrYmVpZHd6bHlqd2h3bHl5eW12Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3Mjk5NzgxMTYsImV4cCI6MjA0NTU1NDExNn0.w6Hw4Xf4p11wZg";
 
         const alarmSpeech = new SpeechSynthesisUtterance("Uwaga! Alarm bojowy dla jednostki e remiza!");
         alarmSpeech.lang = "pl-PL";
@@ -94,7 +95,7 @@
 
         function handleLogin() { switchScreen('screen-dyzurny'); }
 
-        // WYŚLIJ ALARM: Wysyła dane przez prawdziwy internet bez błędów typu 'Failed to fetch'
+        // WYŚLIJ ALARM
         function sendAlarm() {
             const alarmData = {
                 location: document.getElementById('event-location').value,
@@ -102,14 +103,17 @@
                 timestamp: Date.now()
             };
 
-            // Metoda 'no-cors' gwarantuje, że przeglądarka przepuści sygnał bez błędów
             fetch(CHMURA_URL, {
-                method: 'POST',
-                mode: 'no-cors',
+                method: 'PATCH',
+                headers: {
+                    'Content-Type': 'application/json',
+                    'apikey': API_KEY,
+                    'Authorization': `Bearer ${API_KEY}`
+                },
                 body: JSON.stringify(alarmData)
             })
             .then(() => {
-                alert("Alarm został rozesłany przez internet na wszystkie urządzenia!");
+                alert("Alarm został wysłany do chmury internetowej!");
                 switchScreen('screen-main');
             })
             .catch(err => alert("Błąd: " + err));
@@ -125,11 +129,11 @@
                 statusBadge.className = "status-badge status-active";
                 btn.textContent = "Dezaktywuj E-Remizę"; btn.className = "btn btn-red";
                 
-                window.speechSynthesis.speak(new SpeechSynthesisUtterance("Połączono z chmurą internetową"));
+                window.speechSynthesis.speak(new SpeechSynthesisUtterance("Połączono z serwerem alarmowym"));
                 ostatniZapamiętanyCzas = Date.now();
 
-                // Sprawdzamy serwer co 2 sekundy, czy nie pojawił się nowy alarm z internetu
-                internetInterval = setInterval(pobierzAlarmZInternetu, 2000);
+                // Sprawdzamy serwer co 1.5 sekundy
+                internetInterval = setInterval(pobierzAlarmZInternetu, 1500);
             } else {
                 isRemizaActive = false;
                 statusBadge.textContent = "Status: Nieaktywna"; statusBadge.className = "status-badge status-inactive";
@@ -139,14 +143,20 @@
             }
         }
 
-        // FUNKCJA ODBIERAJĄCA SYGNAŁ Z INTERNETU
+        // FUNKCJA ODBIERAJĄCA SYGNAŁ
         function pobierzAlarmZInternetu() {
             if (!isRemizaActive) return;
 
-            fetch(CHMURA_URL)
+            fetch(CHMURA_URL, {
+                method: 'GET',
+                headers: {
+                    'apikey': API_KEY,
+                    'Authorization': `Bearer ${API_KEY}`
+                }
+            })
             .then(res => res.json())
-            .then(data => {
-                // Jeśli w chmurze czeka nowy alarm wysłany po włączeniu czuwania — odpal syrenę!
+            .then(arr => {
+                const data = arr[0];
                 if (data && data.timestamp && data.timestamp > ostatniZapamiętanyCzas) {
                     ostatniZapamiętanyCzas = data.timestamp;
                     
@@ -161,15 +171,18 @@
                     }
                 }
             })
-            .catch(e => console.log("Czuwanie sieciowe..."));
+            .catch(e => console.log("Czuwanie sieci..."));
         }
 
         function silenceAlarm() {
             clearInterval(speechInterval); speechInterval = null; window.speechSynthesis.cancel();
             document.getElementById('alarm-box').classList.add('hidden');
-            
-            // Czyścimy chmurę po wyłączeniu alarmu
-            fetch(CHMURA_URL, { method: 'POST', mode: 'no-cors', body: JSON.stringify({}) });
+            // Resetujemy czas na serwerze
+            fetch(CHMURA_URL, {
+                method: 'PATCH',
+                headers: { 'Content-Type': 'application/json', 'apikey': API_KEY, 'Authorization': `Bearer ${API_KEY}` },
+                body: JSON.stringify({ timestamp: 0 })
+            });
         }
     </script>
 </body>

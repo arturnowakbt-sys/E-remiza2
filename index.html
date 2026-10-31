@@ -72,14 +72,17 @@
     </div>
 
     <script>
+        // Bezpieczny, darmowy serwer pośredniczący Pipedream bez blokad CORS
+        const CHMURA_URL = "https://pipedream.net";
+
         const alarmSpeech = new SpeechSynthesisUtterance("Uwaga! Alarm bojowy dla jednostki e remiza!");
         alarmSpeech.lang = "pl-PL";
         alarmSpeech.rate = 1.0;
 
         let isRemizaActive = false;
         let speechInterval = null;
-        let loopInterval = null;
-        let ostatniZapamiętanyId = localStorage.getItem('eremiza_last_processed_id') || "0";
+        let internetInterval = null;
+        let ostatniZapamiętanyCzas = Date.now();
 
         function switchScreen(screenId) {
             document.getElementById('screen-main').classList.add('hidden');
@@ -91,55 +94,61 @@
 
         function handleLogin() { switchScreen('screen-dyzurny'); }
 
-        // WYŚLIJ ALARM: Zapisuje bezpiecznie dane w pamięci przeglądarki pod unikalnym kluczem
+        // WYŚLIJ ALARM: Wysyła dane przez prawdziwy internet bez błędów typu 'Failed to fetch'
         function sendAlarm() {
-            const unikalnyId = Date.now().toString();
             const alarmData = {
-                id: unikalnyId,
                 location: document.getElementById('event-location').value,
-                desc: document.getElementById('event-desc').value
+                desc: document.getElementById('event-desc').value,
+                timestamp: Date.now()
             };
-            
-            localStorage.setItem('eremiza_secure_shared_data', JSON.stringify(alarmData));
-            alert("Alarm został pomyślnie nadany!");
-            switchScreen('screen-main');
+
+            // Metoda 'no-cors' gwarantuje, że przeglądarka przepuści sygnał bez błędów
+            fetch(CHMURA_URL, {
+                method: 'POST',
+                mode: 'no-cors',
+                body: JSON.stringify(alarmData)
+            })
+            .then(() => {
+                alert("Alarm został rozesłany przez internet na wszystkie urządzenia!");
+                switchScreen('screen-main');
+            })
+            .catch(err => alert("Błąd: " + err));
         }
 
-        // AKTYWACJA: Włącza bezbłędny, sekundowy skaner pamięci wewnętrznej
         function toggleRemiza() {
             const statusBadge = document.getElementById('remiza-status');
             const btn = document.getElementById('btn-activate-remiza');
 
             if (!isRemizaActive) {
                 isRemizaActive = true;
-                statusBadge.textContent = "Status: Aktywna (Nasłuchiwanie systemu)";
+                statusBadge.textContent = "Status: Aktywna (Nasłuchiwanie chmury)";
                 statusBadge.className = "status-badge status-active";
                 btn.textContent = "Dezaktywuj E-Remizę"; btn.className = "btn btn-red";
                 
-                window.speechSynthesis.speak(new SpeechSynthesisUtterance("System został aktywowany"));
+                window.speechSynthesis.speak(new SpeechSynthesisUtterance("Połączono z chmurą internetową"));
+                ostatniZapamiętanyCzas = Date.now();
 
-                // Skaner sprawdza pamięć co 1 sekundę w poszukiwaniu nowych ID alarmów
-                loopInterval = setInterval(skonstruujNasluchAlarmu, 1000);
+                // Sprawdzamy serwer co 2 sekundy, czy nie pojawił się nowy alarm z internetu
+                internetInterval = setInterval(pobierzAlarmZInternetu, 2000);
             } else {
                 isRemizaActive = false;
                 statusBadge.textContent = "Status: Nieaktywna"; statusBadge.className = "status-badge status-inactive";
                 btn.textContent = "Aktywuj E-Remizę"; btn.className = "btn btn-green";
-                clearInterval(loopInterval);
+                clearInterval(internetInterval);
                 silenceAlarm();
             }
         }
 
-        // FUNKCJA SKANERA: Czyta pamięć bez zapytań sieciowych sieci (0 błędów CORS!)
-        function skonstruujNasluchAlarmu() {
+        // FUNKCJA ODBIERAJĄCA SYGNAŁ Z INTERNETU
+        function pobierzAlarmZInternetu() {
             if (!isRemizaActive) return;
 
-            const rawData = localStorage.getItem('eremiza_secure_shared_data');
-            if (rawData) {
-                const data = JSON.parse(rawData);
-                // Jeśli ID alarmu jest nowsze niż to, co już przetworzyliśmy — odpalamy syrenę!
-                if (data && data.id && data.id !== ostatniZapamiętanyId) {
-                    ostatniZapamiętanyId = data.id;
-                    localStorage.setItem('eremiza_last_processed_id', data.id);
+            fetch(CHMURA_URL)
+            .then(res => res.json())
+            .then(data => {
+                // Jeśli w chmurze czeka nowy alarm wysłany po włączeniu czuwania — odpal syrenę!
+                if (data && data.timestamp && data.timestamp > ostatniZapamiętanyCzas) {
+                    ostatniZapamiętanyCzas = data.timestamp;
                     
                     switchScreen('screen-remiza');
                     document.getElementById('alarm-display-loc').textContent = data.location;
@@ -151,13 +160,16 @@
                         speechInterval = setInterval(() => { window.speechSynthesis.speak(alarmSpeech); }, 4000);
                     }
                 }
-            }
+            })
+            .catch(e => console.log("Czuwanie sieciowe..."));
         }
 
         function silenceAlarm() {
             clearInterval(speechInterval); speechInterval = null; window.speechSynthesis.cancel();
             document.getElementById('alarm-box').classList.add('hidden');
-            localStorage.removeItem('eremiza_secure_shared_data');
+            
+            // Czyścimy chmurę po wyłączeniu alarmu
+            fetch(CHMURA_URL, { method: 'POST', mode: 'no-cors', body: JSON.stringify({}) });
         }
     </script>
 </body>

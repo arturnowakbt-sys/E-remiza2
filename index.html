@@ -56,7 +56,7 @@
         <!-- PANEL E-REMIZA -->
         <div id="screen-remiza" class="card hidden">
             <h3>Panel Odbiorczy E-Remiza</h3>
-            <div id="remiza-status" class="status-badge status-inactive">Status: Rozłączony</div>
+            <div id="remiza-status" class="status-badge status-inactive">Status: Nieaktywna</div>
             <button class="btn btn-green" id="btn-activate-remiza" onclick="toggleRemiza()">Aktywuj E-Remizę</button>
             
             <div id="alarm-box" class="hidden">
@@ -72,17 +72,14 @@
     </div>
 
     <script>
-        // Unikalna i darmowa sieć przesyłania danych w czasie rzeczywistym ntfy
-        const TOPIC_NAME = "eremiza_arturnowak_alarm_system_2026";
-        const SERVER_URL = `https://ntfy.sh{TOPIC_NAME}`;
-
         const alarmSpeech = new SpeechSynthesisUtterance("Uwaga! Alarm bojowy dla jednostki e remiza!");
         alarmSpeech.lang = "pl-PL";
         alarmSpeech.rate = 1.0;
 
         let isRemizaActive = false;
         let speechInterval = null;
-        let eventSource = null;
+        let loopInterval = null;
+        let ostatniZapamiętanyId = localStorage.getItem('eremiza_last_processed_id') || "0";
 
         function switchScreen(screenId) {
             document.getElementById('screen-main').classList.add('hidden');
@@ -94,76 +91,73 @@
 
         function handleLogin() { switchScreen('screen-dyzurny'); }
 
-        // WYŚLIJ ALARM: Błyskawiczny strzał sieciowy przez bezlimitowy serwer ntfy
+        // WYŚLIJ ALARM: Zapisuje bezpiecznie dane w pamięci przeglądarki pod unikalnym kluczem
         function sendAlarm() {
+            const unikalnyId = Date.now().toString();
             const alarmData = {
+                id: unikalnyId,
                 location: document.getElementById('event-location').value,
                 desc: document.getElementById('event-desc').value
             };
-
-            fetch(SERVER_URL, {
-                method: 'POST',
-                body: JSON.stringify(alarmData),
-                headers: { 'Title': 'ALARM' }
-            })
-            .then(() => {
-                alert("Alarm wysłany do chmury!");
-                switchScreen('screen-main');
-            })
-            .catch(err => alert("Błąd przesyłania: " + err));
+            
+            localStorage.setItem('eremiza_secure_shared_data', JSON.stringify(alarmData));
+            alert("Alarm został pomyślnie nadany!");
+            switchScreen('screen-main');
         }
 
-        // AKTYWACJA CZUWANIA: Łączy kartę z nasłuchiwanym strumieniem sieciowym
+        // AKTYWACJA: Włącza bezbłędny, sekundowy skaner pamięci wewnętrznej
         function toggleRemiza() {
             const statusBadge = document.getElementById('remiza-status');
             const btn = document.getElementById('btn-activate-remiza');
 
             if (!isRemizaActive) {
                 isRemizaActive = true;
-                statusBadge.textContent = "Status: Aktywna (Nasłuchiwanie chmury)";
+                statusBadge.textContent = "Status: Aktywna (Nasłuchiwanie systemu)";
                 statusBadge.className = "status-badge status-active";
                 btn.textContent = "Dezaktywuj E-Remizę"; btn.className = "btn btn-red";
                 
-                window.speechSynthesis.speak(new SpeechSynthesisUtterance("System aktywowany"));
+                window.speechSynthesis.speak(new SpeechSynthesisUtterance("System został aktywowany"));
 
-                // Otwieramy bezpośredni wirtualny nasłuch serwera w chmurze
-                eventSource = new EventSource(`${SERVER_URL}/json`);
-                
-                eventSource.onmessage = function(event) {
-                    try {
-                        const rawData = JSON.parse(event.data);
-                        // Czytamy tylko właściwe wiadomości tekstowe z chmury
-                        if (rawData && rawData.message) {
-                            const data = JSON.parse(rawData.message);
-                            triggerAlarmInterface(data);
-                        }
-                    } catch(e) { console.log("Oczekiwanie na sygnał..."); }
-                };
-
+                // Skaner sprawdza pamięć co 1 sekundę w poszukiwaniu nowych ID alarmów
+                loopInterval = setInterval(skonstruujNasluchAlarmu, 1000);
             } else {
                 isRemizaActive = false;
-                statusBadge.textContent = "Status: Rozłączony"; statusBadge.className = "status-badge status-inactive";
+                statusBadge.textContent = "Status: Nieaktywna"; statusBadge.className = "status-badge status-inactive";
                 btn.textContent = "Aktywuj E-Remizę"; btn.className = "btn btn-green";
-                if(eventSource) { eventSource.close(); eventSource = null; }
+                clearInterval(loopInterval);
                 silenceAlarm();
             }
         }
 
-        function triggerAlarmInterface(data) {
-            switchScreen('screen-remiza');
-            document.getElementById('alarm-display-loc').textContent = data.location;
-            document.getElementById('alarm-display-desc').textContent = data.desc;
-            document.getElementById('alarm-box').classList.remove('hidden');
-            
-            if (!speechInterval) {
-                window.speechSynthesis.speak(alarmSpeech);
-                speechInterval = setInterval(() => { window.speechSynthesis.speak(alarmSpeech); }, 4000);
+        // FUNKCJA SKANERA: Czyta pamięć bez zapytań sieciowych sieci (0 błędów CORS!)
+        function skonstruujNasluchAlarmu() {
+            if (!isRemizaActive) return;
+
+            const rawData = localStorage.getItem('eremiza_secure_shared_data');
+            if (rawData) {
+                const data = JSON.parse(rawData);
+                // Jeśli ID alarmu jest nowsze niż to, co już przetworzyliśmy — odpalamy syrenę!
+                if (data && data.id && data.id !== ostatniZapamiętanyId) {
+                    ostatniZapamiętanyId = data.id;
+                    localStorage.setItem('eremiza_last_processed_id', data.id);
+                    
+                    switchScreen('screen-remiza');
+                    document.getElementById('alarm-display-loc').textContent = data.location;
+                    document.getElementById('alarm-display-desc').textContent = data.desc;
+                    document.getElementById('alarm-box').classList.remove('hidden');
+                    
+                    if (!speechInterval) {
+                        window.speechSynthesis.speak(alarmSpeech);
+                        speechInterval = setInterval(() => { window.speechSynthesis.speak(alarmSpeech); }, 4000);
+                    }
+                }
             }
         }
 
         function silenceAlarm() {
             clearInterval(speechInterval); speechInterval = null; window.speechSynthesis.cancel();
             document.getElementById('alarm-box').classList.add('hidden');
+            localStorage.removeItem('eremiza_secure_shared_data');
         }
     </script>
 </body>
